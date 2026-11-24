@@ -9,10 +9,11 @@ use crate::{
     utils::{get_osu_pid, handle_redirects, validate_scrobble},
 };
 use anyhow::{Context, Result};
-use chrono::DateTime;
+use chrono::{DateTime, FixedOffset, Utc};
 use colored::Colorize;
 use reqwest::blocking::Client;
 use std::{
+    collections::HashMap,
     sync::LazyLock,
     thread::sleep,
     time::{Duration, SystemTime},
@@ -29,6 +30,8 @@ pub struct Scrobbler {
     listenbrainz: Option<ListenBrainzScrobbler>,
     recent_score: Option<Score>,
     cooldown_secs: u64,
+    // Songs scrobbled recently, with the time they were last played (used for `repeat_cooldown_mins`)
+    recently_scrobbled: HashMap<String, DateTime<FixedOffset>>,
 }
 
 impl Scrobbler {
@@ -47,6 +50,7 @@ impl Scrobbler {
             listenbrainz,
             recent_score: None,
             cooldown_secs: 0,
+            recently_scrobbled: HashMap::new(),
         })
     }
 
@@ -145,6 +149,25 @@ impl Scrobbler {
             title = title_original;
         }
 
+        let played_at = DateTime::parse_from_rfc3339(&score.ended_at).unwrap_or_else(|_| Utc::now().fixed_offset());
+        let song = format!("{} - {}", score.beatmapset.artist.to_lowercase(), score.beatmapset.title.to_lowercase());
+
+        if self.is_repeat(&song, played_at) {
+            Logger::warn(
+                "Scrobbler",
+                format!(
+                    "Skipping score {} - {} [{}]: Song was already scrobbled and played again within {}.",
+                    artist.bright_blue(),
+                    title.bright_blue(),
+                    score.beatmap.version.bright_blue(),
+                    format!("{} min", self.config.repeat_cooldown_mins).bright_blue(),
+                ),
+                false,
+            );
+
+            return;
+        }
+
         if let Err(error) = validate_scrobble(score, &self.config) {
             Logger::warn(
                 "Scrobbler",
@@ -173,6 +196,8 @@ impl Scrobbler {
             title = new_title;
             format!(" (redirected from {})", old_title.bright_blue())
         });
+
+        self.remember_scrobble(song, played_at);
 
         let album = if self.config.fetch_album_names { score.get_album_name(artist, title) } else { None };
 
@@ -208,5 +233,36 @@ impl Scrobbler {
                 Err(error) => Logger::error("ListenBrainz", error, true),
             };
         }
+    }
+
+    /// Whether this play is a repeat of a song that was scrobbled and kept being played within `repeat_cooldown_mins`.
+    /// Every repeated play restarts the cooldown, so retrying a map many times in a row only scrobbles it once.
+    fn is_repeat(&mut self, song: &str, played_at: DateTime<FixedOffset>) -> bool {
+        let cooldown_secs = self.config.repeat_cooldown_mins as i64 * 60;
+
+        if cooldown_secs == 0 {
+            return false;
+        }
+
+        let Some(last_played_at) = self.recently_scrobbled.get_mut(song) else { return false };
+
+        if (played_at - *last_played_at).num_seconds() < cooldown_secs {
+            *last_played_at = played_at;
+            return true;
+        }
+
+        false
+    }
+
+    fn remember_scrobble(&mut self, song: String, played_at: DateTime<FixedOffset>) {
+        let cooldown_secs = self.config.repeat_cooldown_mins as i64 * 60;
+
+        if cooldown_secs == 0 {
+            return;
+        }
+
+        // Forget songs whose cooldown has already passed
+        self.recently_scrobbled.retain(|_, last_played_at| (played_at - *last_played_at).num_seconds() < cooldown_secs);
+        self.recently_scrobbled.insert(song, played_at);
     }
 }

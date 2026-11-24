@@ -30,6 +30,23 @@ An osu! Last.fm and ListenBrainz scrobbler. This scrobbler only works for gamepl
 
 Refer [here](https://github.com/flazepe/osu-scrobbler/wiki/Configuration) for more details about the configuration properties.
 
+This fork also adds `repeat_cooldown_mins` under `[scrobbler]`: once a song is scrobbled, playing it again won't scrobble it until it hasn't been played for this many minutes. Every repeated play restarts the timer, so retrying the same map over and over only scrobbles it once. Default: `0` (scrobble every play).
+
 ## Autostart
 
 You can configure the scrobbler to automatically start on startup. Refer [here](https://github.com/flazepe/osu-scrobbler/wiki/Autostart) for the necessary steps.
+
+### Windows (without the wiki)
+
+#### Option 1: Run in Background (Hidden)
+This method runs the scrobbler silently without a visible terminal window.
+
+1. Ensure `launch_hidden.vbs` is in the same folder as `osu-scrobbler.exe`.
+2. Right-click `launch_hidden.vbs` and select **Create shortcut**.
+3. Press `Win + R` on your keyboard, type `shell:startup`, and press Enter.
+4. Move the newly created shortcut into the Startup folder that opens.
+
+#### Option 2: Run with Terminal (Visible)
+This method keeps the terminal window open, which is useful if you want to monitor logs.
+
+Follow the same steps as Option 1, but create the shortcut for `osu-scrobbler.exe` instead.
